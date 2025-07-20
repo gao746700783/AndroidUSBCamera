@@ -384,7 +384,8 @@ class CameraUvcStrategy(ctx: Context) : ICameraStrategy(ctx) {
         if (mUsbMonitor?.isRegistered == true) {
             return
         }
-        mUsbMonitor = USBMonitor(getContext(), object : USBMonitor.OnDeviceConnectListener {
+        mUsbMonitor = USBMonitor.getInstance(getContext())
+        mUsbMonitor?.setOnDeviceConnectListener(object : USBMonitor.OnDeviceConnectListener {
             /**
              * Called by receive usb device inserted broadcast
              *
