@@ -16,9 +16,11 @@
 package com.jiangdg.demo
 
 import android.Manifest.permission.*
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.PermissionChecker
@@ -46,6 +48,17 @@ class MainActivity : AppCompatActivity() {
 //        replaceDemoFragment(DemoMultiCameraFragment())
         replaceDemoFragment(DemoFragment())
 //        replaceDemoFragment(GlSurfaceFragment())
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        // Handle USB device attachment when activity is already running
+        intent?.let {
+            if (it.action == "android.hardware.usb.action.USB_DEVICE_ATTACHED") {
+                // USB device attached, refresh the current fragment if needed
+                Log.d("MainActivity", "USB device attached via onNewIntent")
+            }
+        }
     }
 
     override fun onStart() {

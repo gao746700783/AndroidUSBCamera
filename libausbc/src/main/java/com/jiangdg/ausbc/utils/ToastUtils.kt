@@ -16,6 +16,7 @@
 package com.jiangdg.ausbc.utils
 
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
 import androidx.annotation.MainThread
 
@@ -45,7 +46,9 @@ object ToastUtils {
     @JvmStatic
     fun show(resId: Int) {
         applicationCtx?.let { ctx ->
-            Toast.makeText(ctx, ctx.getString(resId), Toast.LENGTH_LONG).show()
+            val message = ctx.getString(resId)
+            Log.i("Toast", message)
+            Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
         }
     }
 

@@ -30,6 +30,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbInterface;
@@ -57,6 +58,47 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class USBMonitor {
+	// Singleton instance
+	private static USBMonitor sInstance;
+	
+	/**
+	 * Get the singleton instance of USBMonitor
+	 * @param context Application context
+	 * @return USBMonitor instance
+	 */
+	public static synchronized USBMonitor getInstance(final Context context) {
+		if (sInstance == null) {
+			XLogWrapper.i(TAG, "Creating new USBMonitor singleton instance");
+			sInstance = new USBMonitor(context);
+		} else {
+			XLogWrapper.i(TAG, "Returning existing USBMonitor singleton instance");
+		}
+		return sInstance;
+	}
+	
+	/**
+	 * Set the device connect listener for the singleton instance
+	 * @param listener The listener to set
+	 */
+	public void setOnDeviceConnectListener(final OnDeviceConnectListener listener) {
+		
+		if (listener == null) {
+			throw new IllegalArgumentException("OnDeviceConnectListener should not be null.");
+		}
+		XLogWrapper.i(TAG, "Setting device connect listener");
+		mOnDeviceConnectListener = listener;
+	}
+	
+	/**
+	 * Get the singleton instance of USBMonitor
+	 * @return the singleton instance, or null if not created yet
+	 */
+	public static USBMonitor getSingletonInstance() {
+		return sInstance;
+	}
+
+	
+
 
 	public static boolean DEBUG = true;	// TODO set false on production
 	private static final String TAG = "USBMonitor";
@@ -74,7 +116,7 @@ public final class USBMonitor {
 
 	private final WeakReference<Context> mWeakContext;
 	private final UsbManager mUsbManager;
-	private final OnDeviceConnectListener mOnDeviceConnectListener;
+	private OnDeviceConnectListener mOnDeviceConnectListener;
 	private PendingIntent mPermissionIntent = null;
 	private List<DeviceFilter> mDeviceFilters = new ArrayList<DeviceFilter>();
 
@@ -83,6 +125,100 @@ public final class USBMonitor {
 	 */
 	private final Handler mAsyncHandler;
 	private volatile boolean destroyed;
+
+	/**
+	 * BroadcastReceiver for USB permission and device attach/detach events
+	 */
+	private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver() {
+		@Override
+		public void onReceive(final Context context, final Intent intent) {
+			if (destroyed) {
+				XLogWrapper.w(TAG, "onReceive: USBMonitor already destroyed, ignoring event");
+				return;
+			}
+
+			final String action = intent.getAction();
+			XLogWrapper.i(TAG, "onReceive: action=" + action);
+
+			if (ACTION_USB_PERMISSION.equals(action)) {
+				// Permission request result
+				synchronized (USBMonitor.this) {
+					final UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+					if (device != null) {
+						final boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
+						XLogWrapper.i(TAG, "onReceive: USB_PERMISSION for device=" + device.getDeviceName() + 
+							", VendorId=" + device.getVendorId() + 
+							", ProductId=" + device.getProductId() + 
+							", granted=" + granted);
+
+						// Update internal permission state
+						updatePermission(device, granted);
+
+						// Process connection or cancellation
+						if (granted) {
+							XLogWrapper.i(TAG, "onReceive: Permission granted, processing connection");
+							processConnect(device);
+						} else {
+							XLogWrapper.w(TAG, "onReceive: Permission denied, processing cancellation");
+							processCancel(device);
+						}
+					} else {
+						XLogWrapper.e(TAG, "onReceive: USB_PERMISSION with null device");
+					}
+				}
+			} else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
+				// Device attached
+				final UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+				if (device != null) {
+					XLogWrapper.i(TAG, "onReceive: USB_DEVICE_ATTACHED for device=" + device.getDeviceName() + 
+						", VendorId=" + device.getVendorId() + 
+						", ProductId=" + device.getProductId());
+
+					// Check if the device matches our filters
+					if (hasPermission(device)) {
+						XLogWrapper.i(TAG, "onReceive: Already have permission for attached device, processing connection");
+						processConnect(device);
+					} else {
+						XLogWrapper.i(TAG, "onReceive: Processing device attachment");
+						processAttach(device);
+					}
+				} else {
+					XLogWrapper.e(TAG, "onReceive: USB_DEVICE_ATTACHED with null device");
+				}
+			} else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
+				// Device detached
+				final UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+				if (device != null) {
+					XLogWrapper.i(TAG, "onReceive: USB_DEVICE_DETACHED for device=" + device.getDeviceName() + 
+						", VendorId=" + device.getVendorId() + 
+						", ProductId=" + device.getProductId());
+
+					// Clean up device resources
+					UsbControlBlock ctrlBlock = mCtrlBlocks.remove(device);
+					if (ctrlBlock != null) {
+						XLogWrapper.i(TAG, "onReceive: Closing control block for detached device");
+						ctrlBlock.close();
+					}
+
+					// Remove from permission cache
+					synchronized (mHasPermissions) {
+						final int deviceKey = getDeviceKey(device, true);
+						if (mHasPermissions.get(deviceKey) != null) {
+							XLogWrapper.i(TAG, "onReceive: Removing detached device from permission cache");
+							mHasPermissions.remove(deviceKey);
+						}
+					}
+
+					// Process detachment
+					XLogWrapper.i(TAG, "onReceive: Processing device detachment");
+					processDettach(device);
+				} else {
+					XLogWrapper.e(TAG, "onReceive: USB_DEVICE_DETACHED with null device");
+				}
+			}
+		}
+	};
+
 	/**
 	 * USB機器の状態変更時のコールバックリスナー
 	 */
@@ -117,28 +253,28 @@ public final class USBMonitor {
 		public void onCancel(UsbDevice device);
 	}
 
-	public USBMonitor(final Context context, final OnDeviceConnectListener listener) {
+	// Private constructor for singleton pattern
+	private USBMonitor(final Context context) {
 		if (DEBUG) XLogWrapper.v(TAG, "USBMonitor:Constructor");
-		if (listener == null)
-			throw new IllegalArgumentException("OnDeviceConnectListener should not null.");
-		mWeakContext = new WeakReference<Context>(context);
+		mWeakContext = new WeakReference<Context>(context.getApplicationContext()); // Use application context to prevent leaks
 		mUsbManager = (UsbManager)context.getSystemService(Context.USB_SERVICE);
-		mOnDeviceConnectListener = listener;
 		mAsyncHandler = HandlerThreadHandler.createHandler(TAG);
 		destroyed = false;
-		if (DEBUG) XLogWrapper.v(TAG, "USBMonitor:mUsbManager=" + mUsbManager);
+		XLogWrapper.i(TAG, "USBMonitor:mUsbManager=" + mUsbManager);
 	}
+	
+
 
 	/**
 	 * Release all related resources,
 	 * never reuse again
 	 */
 	public void destroy() {
-		if (DEBUG) XLogWrapper.i(TAG, "destroy:");
+		XLogWrapper.i(TAG, "destroy: Cleaning up USB monitor resources");
 		unregister();
 		if (!destroyed) {
 			destroyed = true;
-			// モニターしているUSB機器を全てcloseする
+			// Close all monitored USB devices
 			final Set<UsbDevice> keys = mCtrlBlocks.keySet();
 			if (keys != null) {
 				UsbControlBlock ctrlBlock;
@@ -159,6 +295,15 @@ public final class USBMonitor {
 			} catch (final Exception e) {
 				XLogWrapper.e(TAG, "destroy:", e);
 			}
+			
+			// Clear the listener
+			mOnDeviceConnectListener = null;
+		}
+		
+		// Clear the singleton instance if this is the singleton instance being destroyed
+		if (sInstance == this) {
+			XLogWrapper.i(TAG, "destroy: Clearing singleton instance");
+			sInstance = null;
 		}
 	}
 
@@ -168,63 +313,116 @@ public final class USBMonitor {
 	 */
 	@SuppressLint({"UnspecifiedImmutableFlag", "WrongConstant"})
 	public synchronized void register() throws IllegalStateException {
-		if (destroyed) throw new IllegalStateException("already destroyed");
-		if (mPermissionIntent == null) {
-			if (DEBUG) XLogWrapper.i(TAG, "register:");
-			final Context context = mWeakContext.get();
-			if (context != null) {
-        if (Build.VERSION.SDK_INT >= 34) {
-          mPermissionIntent = PendingIntent.getBroadcast(context, 0, new Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE);
-        }
-				else if (Build.VERSION.SDK_INT >= 31) {
-					// avoid acquiring intent data failed in receiver on Android12
-					// when using PendingIntent.FLAG_IMMUTABLE
-					// because it means Intent can't be modified anywhere -- jiangdg/20220929
-					Intent intent = new Intent(ACTION_USB_PERMISSION);
-					intent.setPackage(context.getPackageName());
-					mPermissionIntent = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_MUTABLE);
-				} else {
-					mPermissionIntent = PendingIntent.getBroadcast(context, 0, new Intent(ACTION_USB_PERMISSION), 0);
-				}
-				final IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
-				// ACTION_USB_DEVICE_ATTACHED never comes on some devices so it should not be added here
-				filter.addAction(ACTION_USB_DEVICE_ATTACHED);
-				filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-				if (Build.VERSION.SDK_INT >= 34) {
-					// RECEIVER_NOT_EXPORTED is required on Android 14
-					int RECEIVER_NOT_EXPORTED = 4;
-					context.registerReceiver(mUsbReceiver, filter, RECEIVER_NOT_EXPORTED);
-				} else {
-					context.registerReceiver(mUsbReceiver, filter);
-				}
-			}
-			// start connection check
-			mDeviceCounts = 0;
-			mAsyncHandler.postDelayed(mDeviceCheckRunnable, 1000);
+		if (destroyed) {
+			XLogWrapper.e(TAG, "register failed: already destroyed");
+			throw new IllegalStateException("already destroyed");
 		}
+		
+		XLogWrapper.i(TAG, "register: initializing USB monitor");
+		final Context context = mWeakContext.get();
+		if (context == null) {
+			XLogWrapper.e(TAG, "register failed: context is null");
+			return;
+		}
+		
+		// Always recreate the permission intent to ensure it's valid
+		XLogWrapper.i(TAG, "register: creating permission intent");
+		Intent intent = new Intent(ACTION_USB_PERMISSION);
+		intent.setPackage(context.getPackageName());
+		intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+		XLogWrapper.i(TAG, "register: added FLAG_ACTIVITY_SINGLE_TOP and FLAG_ACTIVITY_CLEAR_TOP to intent");
+		
+		// Create PendingIntent with appropriate flags based on Android version
+		try {
+			int flags = PendingIntent.FLAG_UPDATE_CURRENT; // Always update existing intents
+			
+			if (Build.VERSION.SDK_INT >= 34) {
+				// Android 14+ requires IMMUTABLE flag for security
+				XLogWrapper.i(TAG, "register: Android 14+ detected, using FLAG_IMMUTABLE");
+				flags |= PendingIntent.FLAG_IMMUTABLE;
+			} else if (Build.VERSION.SDK_INT >= 31) {
+				// Android 12+ requires explicit package name and MUTABLE flag
+				XLogWrapper.i(TAG, "register: Android 12+ detected, using FLAG_MUTABLE");
+				flags |= PendingIntent.FLAG_MUTABLE;
+			}
+			
+			XLogWrapper.i(TAG, "register: creating PendingIntent with flags: " + flags);
+			mPermissionIntent = PendingIntent.getBroadcast(context, 0, intent, flags);
+			XLogWrapper.i(TAG, "register: permission intent created successfully");
+		} catch (Exception e) {
+			XLogWrapper.e(TAG, "register: failed to create permission intent", e);
+			return;
+		}
+		
+		// Create and register intent filter
+		try {
+			XLogWrapper.i(TAG, "register: creating intent filter");
+			final IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+			// ACTION_USB_DEVICE_ATTACHED never comes on some devices so it should not be added here
+			filter.addAction(ACTION_USB_DEVICE_ATTACHED);
+			filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+			
+			// Unregister existing receiver if it exists to avoid duplicate registration
+			try {
+				context.unregisterReceiver(mUsbReceiver);
+				XLogWrapper.i(TAG, "register: unregistered existing receiver");
+			} catch (IllegalArgumentException e) {
+				// Receiver wasn't registered, this is expected on first run
+				XLogWrapper.i(TAG, "register: no existing receiver to unregister");
+			}
+			
+			// Register the receiver with appropriate flags
+			if (Build.VERSION.SDK_INT >= 34) {
+				// RECEIVER_NOT_EXPORTED is required on Android 14
+				int RECEIVER_NOT_EXPORTED = 4;
+				context.registerReceiver(mUsbReceiver, filter, RECEIVER_NOT_EXPORTED);
+				XLogWrapper.i(TAG, "register: registered receiver with RECEIVER_NOT_EXPORTED flag");
+			} else {
+				context.registerReceiver(mUsbReceiver, filter);
+				XLogWrapper.i(TAG, "register: registered receiver with default flags");
+			}
+		} catch (Exception e) {
+			XLogWrapper.e(TAG, "register: failed to register receiver", e);
+			return;
+		}
+		
+		// Start connection check
+		mDeviceCounts = 0;
+		mAsyncHandler.postDelayed(mDeviceCheckRunnable, 1000);
+		XLogWrapper.i(TAG, "register: USB monitor initialization complete, device check scheduled");
 	}
-
 	/**
-	 * unregister BroadcastReceiver
+	 * Unregister BroadcastReceiver to stop monitoring USB events
 	 * @throws IllegalStateException
 	 */
 	public synchronized void unregister() throws IllegalStateException {
-		// 接続チェック用Runnableを削除
+		XLogWrapper.i(TAG, "unregister: cleaning up USB monitor resources");
+		
+		// Stop device check runnable
 		mDeviceCounts = 0;
 		if (!destroyed) {
+			XLogWrapper.i(TAG, "unregister: removing device check callbacks");
 			mAsyncHandler.removeCallbacks(mDeviceCheckRunnable);
 		}
+		
+		// Unregister broadcast receiver
 		if (mPermissionIntent != null) {
-//			if (DEBUG) XLogWrapper.i(TAG, "unregister:");
+			XLogWrapper.i(TAG, "unregister: permission intent exists, unregistering receiver");
 			final Context context = mWeakContext.get();
 			try {
 				if (context != null) {
 					context.unregisterReceiver(mUsbReceiver);
+					XLogWrapper.i(TAG, "unregister: successfully unregistered USB receiver");
+				} else {
+					XLogWrapper.w(TAG, "unregister: context is null, cannot unregister receiver");
 				}
 			} catch (final Exception e) {
-				XLogWrapper.w(TAG, e);
+				XLogWrapper.e(TAG, "unregister: failed to unregister receiver", e);
 			}
+			
+			// Clear permission intent
 			mPermissionIntent = null;
+			XLogWrapper.i(TAG, "unregister: cleared permission intent");
 		}
 	}
 
@@ -408,152 +606,348 @@ public final class USBMonitor {
 	/**
 	 * return whether the specific Usb device has permission
 	 * @param device
-	 * @return true: 指定したUsbDeviceにパーミッションがある
+	 * @return true if the specified UsbDevice has permission
 	 * @throws IllegalStateException
 	 */
 	public final boolean hasPermission(final UsbDevice device) throws IllegalStateException {
-		if (destroyed) {
-			XLogWrapper.w(TAG, "hasPermission failed, camera destroyed!");
+		
+		if (device == null) {
+			XLogWrapper.e(TAG, "hasPermission: device is null");
 			return false;
 		}
-		return updatePermission(device, device != null && mUsbManager.hasPermission(device));
-	}
-
-	/**
-	 * 内部で保持しているパーミッション状態を更新
-	 * @param device
-	 * @param hasPermission
-	 * @return hasPermission
-	 */
-	private boolean updatePermission(final UsbDevice device, final boolean hasPermission) {
-		// fix api >= 29, permission SecurityException
+		
+		if (destroyed) {
+			XLogWrapper.e(TAG, "hasPermission failed: USBMonitor is destroyed");
+			return false;
+		}
+		
+		// Check cache first to avoid redundant system calls and logging
 		try {
 			final int deviceKey = getDeviceKey(device, true);
 			synchronized (mHasPermissions) {
-				if (hasPermission) {
-					if (mHasPermissions.get(deviceKey) == null) {
-						mHasPermissions.put(deviceKey, new WeakReference<UsbDevice>(device));
-					}
-				} else {
-					mHasPermissions.remove(deviceKey);
-				}
-			}
-		} catch (SecurityException e) {
-			XLogWrapper.w("jiangdg", e.getLocalizedMessage());
-		}
-
-		return hasPermission;
-	}
-
-	/**
-	 * request permission to access to USB device
-	 * @param device
-	 * @return true if fail to request permission
-	 */
-	public synchronized boolean requestPermission(final UsbDevice device) {
-//		if (DEBUG) XLogWrapper.v(TAG, "requestPermission:device=" + device);
-		boolean result = false;
-		if (isRegistered()) {
-			if (device != null) {
-				if (DEBUG) XLogWrapper.i(TAG,"request permission, has permission: " + mUsbManager.hasPermission(device));
-				if (mUsbManager.hasPermission(device)) {
-					// call onConnect if app already has permission
-					processConnect(device);
-				} else {
-					try {
-						// パーミッションがなければ要求する
-						if (DEBUG) XLogWrapper.i(TAG, "start request permission...");
-						mUsbManager.requestPermission(device, mPermissionIntent);
-					} catch (final Exception e) {
-						// Android5.1.xのGALAXY系でandroid.permission.sec.MDM_APP_MGMTという意味不明の例外生成するみたい
-						XLogWrapper.w(TAG,"request permission failed, e = " + e.getLocalizedMessage() ,e);
-						processCancel(device);
-						result = true;
+				WeakReference<UsbDevice> cachedDevice = mHasPermissions.get(deviceKey);
+				if (cachedDevice != null && cachedDevice.get() != null) {
+					// Device is in cache, check if system permission still matches
+					boolean systemHasPermission = mUsbManager.hasPermission(device);
+					if (systemHasPermission) {
+						// Permission still valid, return true without excessive logging
+						return true;
+					} else {
+						// Permission revoked, remove from cache and log
+						if (DEBUG) XLogWrapper.i(TAG, "hasPermission: permission revoked for device: " + device.getDeviceName());
+						mHasPermissions.remove(deviceKey);
+						return false;
 					}
 				}
-			} else {
-				if (DEBUG)
-					XLogWrapper.w(TAG,"request permission failed, device is null?");
-				processCancel(device);
-				result = true;
 			}
-		} else {
-			if (DEBUG)
-				XLogWrapper.w(TAG,"request permission failed, not registered?");
-			processCancel(device);
-			result = true;
+		} catch (Exception e) {
+			if (DEBUG) XLogWrapper.e(TAG, "hasPermission: Error checking cache: " + e.getLocalizedMessage());
 		}
+		
+		// Not in cache or cache check failed, do full permission check
+		if (DEBUG) XLogWrapper.i(TAG, "hasPermission checking for device: " + device.getDeviceName() + 
+			", VendorId: " + device.getVendorId() + 
+			", ProductId: " + device.getProductId());
+		
+		boolean systemHasPermission = mUsbManager.hasPermission(device);
+		if (DEBUG) XLogWrapper.i(TAG, "hasPermission: system reports permission: " + systemHasPermission);
+		
+		// Update our internal permission state and return the result
+		boolean result = updatePermission(device, systemHasPermission);
+		if (DEBUG) XLogWrapper.i(TAG, "hasPermission: final result after updatePermission: " + result);
 		return result;
 	}
 
 	/**
-	 * 指定したUsbDeviceをopenする
-	 * @param device
-	 * @return
-	 * @throws SecurityException パーミッションがなければSecurityExceptionを投げる
+	 * Update internal permission state cache
+	 * @param device USB device to update permission for
+	 * @param hasPermission current permission state from system
+	 * @return hasPermission (same as input)
 	 */
-	public UsbControlBlock openDevice(final UsbDevice device) throws SecurityException {
-		if (hasPermission(device)) {
-			UsbControlBlock result = mCtrlBlocks.get(device);
-			if (result == null) {
-				result = new UsbControlBlock(USBMonitor.this, device);    // この中でopenDeviceする
-				mCtrlBlocks.put(device, result);
+	private boolean updatePermission(final UsbDevice device, final boolean hasPermission) {
+		if (device == null) {
+			XLogWrapper.e(TAG, "updatePermission: device is null");
+			return false;
+		}
+		
+		// fix api >= 29, permission SecurityException
+		try {
+			final int deviceKey = getDeviceKey(device, true);
+			if (DEBUG) XLogWrapper.i(TAG, "updatePermission: device key = " + deviceKey);
+			
+			synchronized (mHasPermissions) {
+				boolean wasInCache = mHasPermissions.get(deviceKey) != null;
+				if (hasPermission) {
+					if (!wasInCache) {
+						if (DEBUG) XLogWrapper.i(TAG, "updatePermission: adding device to permission cache: " + device.getDeviceName());
+						mHasPermissions.put(deviceKey, new WeakReference<UsbDevice>(device));
+					} else {
+						// Device already in cache, no need to log
+						if (DEBUG) XLogWrapper.v(TAG, "updatePermission: device already in permission cache");
+					}
+				} else {
+					if (wasInCache) {
+						if (DEBUG) XLogWrapper.i(TAG, "updatePermission: removing device from permission cache: " + device.getDeviceName());
+						mHasPermissions.remove(deviceKey);
+					} else {
+						// Device not in cache, no need to log
+						if (DEBUG) XLogWrapper.v(TAG, "updatePermission: device not in permission cache");
+					}
+				}
 			}
-			return result;
+		} catch (SecurityException e) {
+			XLogWrapper.e(TAG, "updatePermission: SecurityException: " + e.getLocalizedMessage(), e);
+		} catch (Exception e) {
+			XLogWrapper.e(TAG, "updatePermission: Exception: " + e.getLocalizedMessage(), e);
+		}
+		
+		if (DEBUG) XLogWrapper.v(TAG, "updatePermission: returning " + hasPermission);
+		return hasPermission;
+	}
+	
+	/**
+	 * Reset device permission state to ensure clean initialization
+	 * @param device
+	 */
+	public synchronized void resetDevicePermission(final UsbDevice device) {
+		
+		if (device == null) {
+			XLogWrapper.e(TAG, "resetDevicePermission: device is null");
+			return;
+		}
+		
+		XLogWrapper.i(TAG, "resetDevicePermission: " + device.getDeviceName() + 
+			", VendorId: " + device.getVendorId() + 
+			", ProductId: " + device.getProductId());
+		
+		// Clear cached permission state
+		boolean previousPermission = mUsbManager.hasPermission(device);
+		updatePermission(device, false);
+		XLogWrapper.i(TAG, "resetDevicePermission: permission before reset: " + previousPermission + 
+			", after reset: " + mUsbManager.hasPermission(device));
+		
+		// Remove from control blocks if present
+		UsbControlBlock ctrlBlock = mCtrlBlocks.remove(device);
+		if (ctrlBlock != null) {
+			XLogWrapper.i(TAG, "resetDevicePermission: removing control block for device");
+			ctrlBlock.close();
 		} else {
-			throw new SecurityException("has no permission");
+			XLogWrapper.i(TAG, "resetDevicePermission: no control block found for device");
+		}
+		
+		// Force garbage collection to clean up native resources
+		System.gc();
+		
+		// Small delay to ensure cleanup is complete
+		try {
+			XLogWrapper.i(TAG, "resetDevicePermission: sleeping for 200ms to ensure cleanup");
+			Thread.sleep(200);
+			XLogWrapper.i(TAG, "resetDevicePermission: cleanup complete");
+		} catch (InterruptedException e) {
+			XLogWrapper.e(TAG, "resetDevicePermission: interrupted during cleanup", e);
+			Thread.currentThread().interrupt();
 		}
 	}
-
+	
 	/**
-	 * BroadcastReceiver for USB permission
-	 */
-	private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver() {
-
-		@Override
-		public void onReceive(final Context context, final Intent intent) {
-			if (destroyed) return;
-			final String action = intent.getAction();
-			if (ACTION_USB_PERMISSION.equals(action)) {
-				// when received the result of requesting USB permission
-				synchronized (USBMonitor.this) {
-					final UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
-					if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-						if (device != null) {
-							// get permission, call onConnect
-							if (DEBUG)
-								XLogWrapper.w(TAG, "get permission success in mUsbReceiver");
-							processConnect(device);
-						}
-					} else {
-						// failed to get permission
-						if (DEBUG)
-							XLogWrapper.w(TAG, "get permission failed in mUsbReceiver");
-						processCancel(device);
-					}
-				}
-			} else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
-				final UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
-				updatePermission(device, hasPermission(device));
-				processAttach(device);
-			} else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
-				// when device removed
-				final UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
-				if (device != null) {
-					UsbControlBlock ctrlBlock = mCtrlBlocks.remove(device);
-					if (ctrlBlock != null) {
-						// cleanup
-						ctrlBlock.close();
-					}
-					mDeviceCounts = 0;
-					processDettach(device);
-				}
-			}
-		}
-	};
+     * Request permission to access USB device
+     * @param device USB device to request permission for
+     * @return true if request process successfully started or already have permission
+     */
+    public synchronized boolean requestPermission(final UsbDevice device) {
+        XLogWrapper.v(TAG, "requestPermission: device=" + (device != null ? device.getDeviceName() : "null"));
+        boolean result = false;
+        
+        // Check if USBMonitor is registered
+        if (!isRegistered()) {
+            XLogWrapper.e(TAG, "requestPermission failed: USBMonitor is not registered");
+            XLogWrapper.e(TAG, "CRITICAL: Permission dialog will not show if USBMonitor is not registered");
+            processCancel(device);
+            return true;
+        }
+        
+        // Check if device is valid
+        if (device == null) {
+            XLogWrapper.e(TAG, "requestPermission failed: device is null");
+            processCancel(device);
+            return true;
+        }
+        
+        // Log device details
+        XLogWrapper.i(TAG, "requestPermission for device: " + device.getDeviceName() + 
+            ", VendorId: " + device.getVendorId() + 
+            ", ProductId: " + device.getProductId());
+        
+        // Check if context is still valid
+        final Context context = mWeakContext.get();
+        if (context == null) {
+            XLogWrapper.e(TAG, "requestPermission failed: context is null or has been garbage collected");
+            XLogWrapper.e(TAG, "CRITICAL: Permission dialog cannot be shown without valid context");
+            processCancel(device);
+            return true;
+        }
+        
+        // Check if this is a fresh install
+        SharedPreferences prefs = context.getSharedPreferences("usb_monitor_prefs", Context.MODE_PRIVATE);
+        boolean firstRun = prefs.getBoolean("first_run", true);
+        if (firstRun) {
+            XLogWrapper.w(TAG, "FIRST RUN DETECTED: This is a fresh install, ensuring permission flow is correct");
+            // Mark that we've run once
+            prefs.edit().putBoolean("first_run", false).apply();
+        }
+        
+        // For Android 9+ (API 28+), reset permission first
+        if (Build.VERSION.SDK_INT >= 28) {
+            XLogWrapper.i(TAG, "Android 9+ detected, resetting device permission first");
+            resetDevicePermission(device);
+            try { 
+                XLogWrapper.i(TAG, "Waiting 100ms after permission reset");
+                Thread.sleep(100); 
+            } catch (InterruptedException e) { 
+                XLogWrapper.e(TAG, "Sleep interrupted", e);
+                Thread.currentThread().interrupt(); 
+            }
+        }
+        
+        // Check if we already have permission
+        boolean hasPermission = mUsbManager.hasPermission(device);
+        XLogWrapper.i(TAG, "Current permission status from UsbManager: " + (hasPermission ? "GRANTED" : "DENIED"));
+        
+        // Double check our internal permission cache
+        final int deviceKey = getDeviceKey(device, true);
+        boolean inCache = false;
+        synchronized (mHasPermissions) {
+            inCache = mHasPermissions.get(deviceKey) != null;
+        }
+        XLogWrapper.i(TAG, "Permission status in internal cache: " + (inCache ? "GRANTED" : "DENIED") + ", deviceKey: " + deviceKey);
+        
+        // If there's a mismatch between system and our cache, log it
+        if (hasPermission != inCache) {
+            XLogWrapper.w(TAG, "PERMISSION STATE MISMATCH: UsbManager says " + 
+                (hasPermission ? "GRANTED" : "DENIED") + " but our cache says " + 
+                (inCache ? "GRANTED" : "DENIED"));
+        }
+        
+        if (hasPermission) {
+            XLogWrapper.i(TAG, "Permission already granted, processing connection");
+            processConnect(device);
+            return false;
+        } else {
+            // Need to request permission
+            try {
+                // Check if mPermissionIntent is properly initialized
+                if (mPermissionIntent == null) {
+                    XLogWrapper.e(TAG, "CRITICAL: Permission intent is null, cannot request permission");
+                    XLogWrapper.e(TAG, "This usually means register() was not called or failed");
+                    
+                    // Try to recreate the permission intent as a last resort
+                    XLogWrapper.i(TAG, "Attempting to recreate permission intent as emergency fix");
+                    try {
+                        Intent intent = new Intent(ACTION_USB_PERMISSION);
+                        intent.setPackage(context.getPackageName());
+                        // Add flags to prevent creating new activities
+                        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                        
+                        int flags = 0;
+                        if (Build.VERSION.SDK_INT >= 31) {
+                            flags = PendingIntent.FLAG_MUTABLE;
+                        }
+                        // Add FLAG_UPDATE_CURRENT to ensure we update any existing pending intent
+                        flags |= PendingIntent.FLAG_UPDATE_CURRENT;
+                        
+                        mPermissionIntent = PendingIntent.getBroadcast(context, 0, intent, flags);
+                        XLogWrapper.i(TAG, "Emergency permission intent creation succeeded with flags: " + flags);
+                    } catch (Exception e) {
+                        XLogWrapper.e(TAG, "Emergency permission intent creation failed", e);
+                        processCancel(device);
+                        return true;
+                    }
+                }
+                
+                // Check if the broadcast receiver is registered
+                XLogWrapper.i(TAG, "Broadcast receiver status: " + (mUsbReceiver != null ? "initialized" : "NULL"));
+                if (mUsbReceiver == null) {
+                    XLogWrapper.e(TAG, "CRITICAL: USB receiver is null, permission result cannot be received");
+                    processCancel(device);
+                    return true;
+                }
+                
+                // Log the current state before requesting permission
+                XLogWrapper.i(TAG, "About to request USB permission with:" +
+                    "\n - Device: " + device.getDeviceName() +
+                    "\n - Permission Intent: " + mPermissionIntent +
+                    "\n - UsbManager: " + mUsbManager +
+                    "\n - Android version: " + Build.VERSION.SDK_INT);
+                
+                // Request permission
+                mUsbManager.requestPermission(device, mPermissionIntent);
+                XLogWrapper.i(TAG, "Permission request sent successfully");
+                
+                // On some devices, the permission dialog might not show immediately
+                // Let's check if we get permission right away (this can happen on some devices)
+                try { 
+                    XLogWrapper.i(TAG, "Waiting 100ms to check if permission was granted immediately");
+                    Thread.sleep(100); 
+                    boolean immediatePermission = mUsbManager.hasPermission(device);
+                    XLogWrapper.i(TAG, "Immediate permission check after request: " + 
+                        (immediatePermission ? "GRANTED" : "DENIED/PENDING"));
+                } catch (InterruptedException e) { 
+                    Thread.currentThread().interrupt(); 
+                }
+                
+                return false;
+            } catch (Exception e) {
+                XLogWrapper.e(TAG, "requestPermission failed with exception", e);
+                processCancel(device);
+                return true;
+            }
+        }
+    }
+    
+    /**
+     * Open a USB device with permission check
+     * @param device USB device to open
+     * @return UsbControlBlock for the device
+     * @throws SecurityException if permission is not granted
+     */
+    public UsbControlBlock openDevice(final UsbDevice device) throws SecurityException {
+        if (device == null) {
+            XLogWrapper.e(TAG, "openDevice: device is null");
+            throw new IllegalArgumentException("device is null");
+        }
+        
+        XLogWrapper.i(TAG, "openDevice: " + device.getDeviceName() + 
+            ", VendorId: " + device.getVendorId() + 
+            ", ProductId: " + device.getProductId());
+        
+        boolean hasPermission = hasPermission(device);
+        XLogWrapper.i(TAG, "openDevice: has permission: " + hasPermission);
+        
+        if (hasPermission) {
+            UsbControlBlock result = mCtrlBlocks.get(device);
+            if (result == null) {
+                XLogWrapper.i(TAG, "openDevice: creating new UsbControlBlock");
+                try {
+                    result = new UsbControlBlock(USBMonitor.this, device);
+                    mCtrlBlocks.put(device, result);
+                    XLogWrapper.i(TAG, "openDevice: successfully created UsbControlBlock");
+                } catch (Exception e) {
+                    XLogWrapper.e(TAG, "openDevice: failed to create UsbControlBlock", e);
+                    throw new RuntimeException("Failed to open device: " + e.getMessage(), e);
+                }
+            } else {
+                XLogWrapper.i(TAG, "openDevice: reusing existing UsbControlBlock");
+            }
+            return result;
+        } else {
+            XLogWrapper.e(TAG, "openDevice: no permission for device " + device.getDeviceName());
+            throw new SecurityException("No permission to access USB device");
+        }
+    }
 
 	/** number of connected & detected devices */
 	private volatile int mDeviceCounts = 0;
+
 	/**
 	 * periodically check connected devices and if it changed, call onAttach
 	 */
@@ -565,11 +959,29 @@ public final class USBMonitor {
 			final int n = devices.size();
 			final int hasPermissionCounts;
 			final int m;
+			
+			// Only check permissions if device count changed or it's been a while
+			boolean needsPermissionCheck = false;
 			synchronized (mHasPermissions) {
 				hasPermissionCounts = mHasPermissions.size();
-				mHasPermissions.clear();
-				for (final UsbDevice device: devices) {
-					hasPermission(device);
+				
+				// Check if device count changed
+				if (n != mDeviceCounts) {
+					needsPermissionCheck = true;
+					if (DEBUG) XLogWrapper.i(TAG, "Device count changed from " + mDeviceCounts + " to " + n + ", checking permissions");
+				}
+				
+				// Only clear cache and recheck if needed
+				if (needsPermissionCheck) {
+					mHasPermissions.clear();
+					for (final UsbDevice device: devices) {
+						hasPermission(device);
+					}
+				} else {
+					// Just verify existing permissions without clearing cache
+					for (final UsbDevice device: devices) {
+						hasPermission(device); // This will use cache optimization
+					}
 				}
 				m = mHasPermissions.size();
 			}
@@ -587,7 +999,10 @@ public final class USBMonitor {
 					}
 				}
 			}
-			mAsyncHandler.postDelayed(this, 2000);	// confirm every 2 seconds
+			
+			// Use longer interval when devices are stable to reduce overhead
+			long nextCheckDelay = needsPermissionCheck ? 2000 : 5000;
+			mAsyncHandler.postDelayed(this, nextCheckDelay);
 		}
 	};
 
@@ -620,18 +1035,67 @@ public final class USBMonitor {
 			}
 		});
 	}
-
+	
+	/**
+	 * Process permission denial or cancellation for a USB device
+	 * @param device The USB device for which permission was denied or cancelled
+	 */
 	private void processCancel(final UsbDevice device) {
-		if (destroyed) return;
-		if (DEBUG) XLogWrapper.v(TAG, "processCancel:");
+		if (destroyed) {
+			XLogWrapper.w(TAG, "processCancel: USBMonitor already destroyed, ignoring");
+			return;
+		}
+		
+		XLogWrapper.i(TAG, "processCancel: Processing permission denial for device: " + 
+			(device != null ? device.getDeviceName() + ", VendorId: " + device.getVendorId() + 
+			", ProductId: " + device.getProductId() : "null"));
+		
+		// Check if this is a fresh install scenario
+		SharedPreferences prefs = null;
+		boolean isFirstRun = false;
+		final Context context = mWeakContext.get();
+		if (context != null) {
+			prefs = context.getSharedPreferences("usb_monitor_prefs", Context.MODE_PRIVATE);
+			isFirstRun = prefs.getBoolean("first_run", true);
+			if (isFirstRun) {
+				XLogWrapper.w(TAG, "processCancel: This appears to be a first run, permission dialog may not have been shown");
+				prefs.edit().putBoolean("first_run", false).apply();
+				
+				// On first run, immediately try to request permission again
+				if (device != null) {
+					XLogWrapper.i(TAG, "processCancel: First run detected, trying to request permission again");
+					mAsyncHandler.postDelayed(new Runnable() {
+						@Override
+						public void run() {
+							requestPermission(device);
+						}
+					}, 500); // Small delay before requesting again
+					return; // Don't notify about cancellation on first run
+				}
+			}
+		}
+		
+		// Check if permission intent is valid
+		XLogWrapper.i(TAG, "processCancel: Permission intent status: " + (mPermissionIntent != null ? "valid" : "NULL"));
+		
+		// Update internal permission state
+		boolean previousPermission = device != null && mUsbManager.hasPermission(device);
+		XLogWrapper.i(TAG, "processCancel: System permission before update: " + previousPermission);
 		updatePermission(device, false);
+		XLogWrapper.i(TAG, "processCancel: Updated internal permission cache to DENIED");
+		
+		// Notify listener about cancellation
 		if (mOnDeviceConnectListener != null) {
+			XLogWrapper.i(TAG, "processCancel: Notifying listener about cancellation");
 			mAsyncHandler.post(new Runnable() {
 				@Override
 				public void run() {
 					mOnDeviceConnectListener.onCancel(device);
+					XLogWrapper.i(TAG, "processCancel: Listener notified");
 				}
 			});
+		} else {
+			XLogWrapper.w(TAG, "processCancel: No listener registered to notify about cancellation");
 		}
 	}
 
@@ -1026,12 +1490,28 @@ public final class USBMonitor {
 			mConnection = monitor.mUsbManager.openDevice(device);
 			if (mConnection == null) {
 				XLogWrapper.w(TAG, "openDevice failed in UsbControlBlock11, wait and try again");
-				try {
-					Thread.sleep(500);
-				} catch (InterruptedException e) {
-					e.printStackTrace();
+				// Enhanced retry logic for higher Android versions
+				int retryCount = 0;
+				int maxRetries = Build.VERSION.SDK_INT >= 28 ? 5 : 3;
+				long retryDelay = 500;
+				
+				while (mConnection == null && retryCount < maxRetries) {
+					try {
+						Thread.sleep(retryDelay);
+						retryCount++;
+						XLogWrapper.i(TAG, "Retry attempt " + retryCount + " for device: " + device.getDeviceName());
+						mConnection = monitor.mUsbManager.openDevice(device);
+						// Increase delay for subsequent retries
+						retryDelay += 200;
+					} catch (InterruptedException e) {
+						XLogWrapper.e(TAG, "Interrupted during retry", e);
+						break;
+					}
 				}
-				mConnection = monitor.mUsbManager.openDevice(device);
+				
+				if (mConnection == null) {
+					XLogWrapper.e(TAG, "Failed to open device after " + maxRetries + " attempts");
+				}
 			}
 			mInfo = updateDeviceInfo(monitor.mUsbManager, device, null);
 			final String name = device.getDeviceName();

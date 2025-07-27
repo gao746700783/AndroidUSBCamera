@@ -52,7 +52,8 @@ class MultiCameraClient(ctx: Context, callback: IDeviceConnectCallBack?) {
     }
 
     init {
-        mUsbMonitor = USBMonitor(ctx, object : USBMonitor.OnDeviceConnectListener {
+        mUsbMonitor = USBMonitor.getInstance(ctx)
+        mUsbMonitor?.setOnDeviceConnectListener(object : USBMonitor.OnDeviceConnectListener {
             /**
              * Called by receive usb device inserted broadcast
              *
@@ -243,7 +244,21 @@ class MultiCameraClient(ctx: Context, callback: IDeviceConnectCallBack?) {
         UVCCamera.DEBUG = debug
     }
 
-    private fun isMonitorRegistered() = mUsbMonitor?.isRegistered == true
+    private fun isMonitorRegistered(): Boolean {
+        // First check if our local instance is registered
+        val localRegistered = mUsbMonitor?.isRegistered == true
+        
+        // If local instance is not registered, check if the singleton instance is registered
+        // This handles the case when a device is connected after app start
+        if (!localRegistered && mUsbMonitor != null) {
+            val singletonRegistered = USBMonitor.getSingletonInstance()?.isRegistered == true
+            if (singletonRegistered) {
+                Logger.i(TAG, "Local monitor not registered but singleton is registered")
+                return true
+            }
+        }
+        return localRegistered
+    }
 
 
     /**
