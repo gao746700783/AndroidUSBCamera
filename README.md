@@ -1,9 +1,11 @@
 ![logo.png](https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/906db02b1dbc49669c38f870b6df2e96~tplv-k3u1fbpfcp-watermark.image?)
 
 
-# AUSBC&ensp;[![](https://jitpack.io/v/jiangdongguo/AndroidUSBCamera.svg)](https://jitpack.io/#jiangdongguo/AndroidUSBCamera) [![API](https://img.shields.io/badge/API-19%2B-brightgreen.svg?style=flat)](https://android-arsenal.com/api?level=19)
+# AUSBC&ensp;[![](https://jitpack.io/v/ernestp/AndroidUSBCamera.svg)](https://jitpack.io/#ernestp/AndroidUSBCamera) [![API](https://img.shields.io/badge/API-23%2B-brightgreen.svg?style=flat)](https://android-arsenal.com/api?level=23)
 
-&emsp;Flexible and useful UVC camera engine on Android platform, you can use it to simply  open your uvc camera (supporting multi-road cameras) without  any system permissions . The only thing you should do is that confirming your Android device must support OTG function. So, welcom to use **AUSBC3.0** and welcom to **star** & **fork** & **issues**!
+&emsp;Flexible and useful UVC camera engine on Android platform, you can use it to simply  open your uvc camera (supporting multi-road cameras) without  any system permissions . The only thing you should do is that confirming your Android device must support OTG function. So, welcome to use **AUSBC3.0** and welcome to **star** & **fork** & **issues**!
+
+&emsp;This project is fork of [jiangdongguo/AndroidUSBCamera](https://github.com/jiangdongguo/AndroidUSBCamera).
 
 ![multi-road camera](https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/75a8f700d97c4de4979c9d0927764af9~tplv-k3u1fbpfcp-watermark.image?)
 
@@ -15,7 +17,7 @@ Feature
 -------
 
 - Support opening multi-road camera;
-- Support opening uvc camera on Android 4.4+;
+- Support opening uvc camera on Android 6.0+;
 - Support previewing 480p、720p、1080p，etc;
 - Support adding effects with OpenGL ES 2.0;
 - Support capture photo(`.jpg`)、viedo(`.mp4`/`.h264`/`yuv`) and audio(`pcm`/`mp3`/`aac`)
@@ -45,11 +47,11 @@ allprojects {
 }
 ```
 
-&emsp;Second, add the dependency in your **app.gradle** , latest tag is [![](https://jitpack.io/v/jiangdongguo/AndroidUSBCamera.svg)](https://jitpack.io/#jiangdongguo/AndroidUSBCamera):
+&emsp;Second, add the dependency in your **app.gradle** , latest tag is [![](https://jitpack.io/v/ernestp/AndroidUSBCamera.svg)](https://jitpack.io/#ernestp/AndroidUSBCamera):
 
 ```groovy
 dependencies {
-    implementation 'com.github.jiangdongguo.AndroidUSBCamera:libausbc:latest_tag'
+    implementation 'com.github.ernestp.AndroidUSBCamera:libausbc:3.4.0'
 }
 ```
 
@@ -288,7 +290,7 @@ dependencies {
     implementation project(':libausbc')
 
     // demo
-    //implementation 'com.github.jiangdongguo.AndroidUSBCamera:libausbc:latest_tag'
+    //implementation 'com.github.ernestp.AndroidUSBCamera:libausbc:latest_tag'
 }
 ```
 
@@ -301,20 +303,18 @@ dependencies {
 Demo
 -------
 
-![](https://www.pgyer.com/app/qrcode/fVo5)
-
-&emsp;[AUSBC.apk](https://github.com/jiangdongguo/AndroidUSBCamera/blob/master/app/release/app-release.apk)
+&emsp;[AUSBC.apk](https://github.com/ernestp/AndroidUSBCamera/releases/download/3.4.0/ausbc-3.4.0.apk)
 
 
 Version
 -------
 
-[Update details](https://github.com/jiangdongguo/AndroidUSBCamera/blob/master/VERSION.md)
+[Update details](https://github.com/ernestp/AndroidUSBCamera/blob/master/VERSION.md)
 
 Q & A
 -------
 
-[FAQ](https://github.com/jiangdongguo/AndroidUSBCamera/blob/master/FAQ.md)
+[FAQ](https://github.com/ernestp/AndroidUSBCamera/blob/master/FAQ.md)
 
 
 Homepage & Help
@@ -326,8 +326,8 @@ Homepage & Help
 
 
 
-&emsp;If you have any question or fun ideas, please issues to me.  
-&emsp;Of course, you can also send me a **微信**   "`laojiang299`"   or a **EMAIL**  "`765067602@qq.com`".   
+&emsp;If you have any question or fun ideas, please file issue on GitHub as [feature].  
+ 
 
 &emsp;So, do not forget to send logs from location **Android/data/com.jiangdg.ausbc/files** and collect logcat information by executing command `adb shell logcat -v threadtime > usbcamera.log`
 
@@ -336,6 +336,8 @@ Homepage & Help
 Thanks
 -------
 
+ [jiangdongguo/AndroidUSBCamera](https://github.com/jiangdongguo/AndroidUSBCamera)
+ 
  [saki4510t/UVCCamera](https://github.com/saki4510t/UVCCamera)
 
 
