@@ -29,8 +29,8 @@ ext {
     versionCompiler = 34
     versionTarget = 34
     minSdkVersion = 23
-    versionCode = 126
-    versionNameString = '3.3.3'
+    versionCode = 127
+    versionNameString = '3.4.0'
     javaSourceCompatibility = JavaVersion.VERSION_1_8
     javaTargetCompatibility = JavaVersion.VERSION_1_8
     ndkVersion = '28.1.13356709'
