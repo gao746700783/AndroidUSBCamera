@@ -1,11 +1,18 @@
 plugins {
     id 'com.android.library'
     id 'kotlin-android'
+    id 'maven-publish'
 }
 
 android {
     namespace = "com.jiangdg.ausbc"
     compileSdkVersion rootProject.ext.versionCompiler
+    
+    publishing {
+        singleVariant('release') {
+            withSourcesJar()
+        }
+    }
 
     defaultConfig {
         minSdkVersion rootProject.ext.minSdkVersion
@@ -37,8 +44,19 @@ dependencies {
     implementation "androidx.constraintlayout:constraintlayout:${constraintlayoutVersion}"
     implementation "com.google.android.material:material:${materialVersion}"
     api 'com.elvishew:xlog:1.11.0'
-//    implementation fileTree("libs")
-
     implementation project(path: ':libuvc')
     api project(path: ':libnative')
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.ernestp'
+                artifactId = 'libausbc'
+                version = rootProject.ext.versionNameString
+            }
+        }
+    }
 }
