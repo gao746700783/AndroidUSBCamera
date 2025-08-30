@@ -1,7 +1,5 @@
 apply plugin: 'com.android.library'
 
-import org.apache.tools.ant.taskdefs.condition.Os
-
 android {
 	namespace = "com.jiangdg.uvccamera"
 	compileSdkVersion rootProject.ext.versionCompiler
@@ -14,6 +12,12 @@ android {
 	defaultConfig {
 		minSdkVersion rootProject.ext.minSdkVersion
 		targetSdkVersion rootProject.ext.versionTarget
+		ndkVersion rootProject.ext.ndkVersion
+
+		ndk {
+			// Exclude x86 and x86_64 until update libjpeg-turbo
+			abiFilters 'armeabi-v7a', 'arm64-v8a'
+		}
 	}
 
 	lintOptions {
@@ -31,44 +35,16 @@ android {
 			proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
 		}
 	}
-}
 
-tasks.withType(JavaCompile) {
-	compileTask -> compileTask.dependsOn ndkBuild
-}
-
-String getNdkBuildPath() {
-	Properties properties = new Properties()
-	properties.load(project.rootProject.file('local.properties').newDataInputStream())
-	def sdkBuildingDir = properties.getProperty("sdk.dir")
-	def ndkBuildingDir = sdkBuildingDir + "/ndk/" + rootProject.ext.ndkVersion
-
-	def ndkBuildPath = ndkBuildingDir
-	if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-		ndkBuildPath = ndkBuildingDir + '/ndk-build.cmd'
-	} else {
-		ndkBuildPath = ndkBuildingDir + '/ndk-build'
+	externalNativeBuild {
+		ndkBuild {
+			path 'src/main/jni/Android.mk'
+		}
 	}
-	return ndkBuildPath
 }
-
-task ndkBuild(type: Exec, description: 'Compile JNI source via NDK') {
-	println('executing ndkBuild')
-	def ndkBuildPath = getNdkBuildPath();
-	commandLine ndkBuildPath, 'V=1', '-j8', '-C', file('src/main').absolutePath
-}
-
-task ndkClean(type: Exec, description: 'clean JNI libraries') {
-	println('executing ndkBuild clean')
-	def ndkBuildPath = getNdkBuildPath();
-	commandLine ndkBuildPath, 'clean', '-C', file('src/main').absolutePath
-}
-
-clean.dependsOn 'ndkClean'
 
 dependencies {
 	implementation fileTree(dir: new File(buildDir, 'libs'), include: '*.jar')
 	implementation "androidx.appcompat:appcompat:${androidXVersion}"
 	implementation 'com.elvishew:xlog:1.11.0'
-//	implementation project(path: ':libuvccommon')
 }
