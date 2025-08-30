@@ -51,7 +51,7 @@ allprojects {
 
 ```groovy
 dependencies {
-    implementation 'com.github.ernestp.AndroidUSBCamera:libausbc:3.4.0'
+    implementation 'com.github.ernestp.AndroidUSBCamera:libausbc:3.4.1'
 }
 ```
 
