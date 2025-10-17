@@ -51,7 +51,7 @@ allprojects {
 
 ```groovy
 dependencies {
-    implementation 'com.github.ernestp.AndroidUSBCamera:libausbc:tag'
+    implementation 'com.github.gao746700783.AndroidUSBCamera:libausbc:tag'
 }
 ```
 
@@ -290,7 +290,7 @@ dependencies {
     implementation project(':libausbc')
 
     // demo
-    //implementation 'com.github.ernestp.AndroidUSBCamera:libausbc:latest_tag'
+    //implementation 'com.github.gao746700783.AndroidUSBCamera:libausbc:latest_tag'
 }
 ```
 

@@ -53,7 +53,7 @@ afterEvaluate {
         publications {
             release(MavenPublication) {
                 from components.release
-                groupId = 'com.github.ernestp'
+                groupId = 'com.github.gao746700783'
                 artifactId = 'libausbc'
                 version = rootProject.ext.versionNameString
             }
