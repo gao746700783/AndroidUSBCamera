@@ -1,7 +1,7 @@
 ![logo.png](https://p6-juejin.byteimg.com/tos-cn-i-k3u1fbpfcp/906db02b1dbc49669c38f870b6df2e96~tplv-k3u1fbpfcp-watermark.image?)
 
 
-# AUSBC&ensp;[![](https://jitpack.io/v/ernestp/AndroidUSBCamera.svg)](https://jitpack.io/#ernestp/AndroidUSBCamera) [![API](https://img.shields.io/badge/API-23%2B-brightgreen.svg?style=flat)](https://android-arsenal.com/api?level=23)
+# AUSBC&ensp;[![](https://jitpack.io/v/gao746700783/AndroidUSBCamera.svg)](https://jitpack.io/#gao746700783/AndroidUSBCamera) [![API](https://img.shields.io/badge/API-23%2B-brightgreen.svg?style=flat)](https://android-arsenal.com/api?level=23)
 
 &emsp;Flexible and useful UVC camera engine on Android platform, you can use it to simply  open your uvc camera (supporting multi-road cameras) without  any system permissions . The only thing you should do is that confirming your Android device must support OTG function. So, welcome to use **AUSBC3.0** and welcome to **star** & **fork** & **issues**!
 
@@ -47,7 +47,7 @@ allprojects {
 }
 ```
 
-&emsp;Second, add the dependency in your **app.gradle** , latest tag is [![](https://jitpack.io/v/ernestp/AndroidUSBCamera.svg)](https://jitpack.io/#ernestp/AndroidUSBCamera):
+&emsp;Second, add the dependency in your **app.gradle** , latest tag is [![](https://jitpack.io/v/gao746700783/AndroidUSBCamera.svg)](https://jitpack.io/#gao746700783/AndroidUSBCamera):
 
 ```groovy
 dependencies {
@@ -303,18 +303,18 @@ dependencies {
 Demo
 -------
 
-&emsp;[AUSBC.apk](https://github.com/ernestp/AndroidUSBCamera/releases/download/3.4.0/ausbc-3.4.0.apk)
+&emsp;[AUSBC.apk](https://github.com/gao746700783/AndroidUSBCamera/releases/download/3.4.0/ausbc-3.4.0.apk)
 
 
 Version
 -------
 
-[Update details](https://github.com/ernestp/AndroidUSBCamera/blob/master/VERSION.md)
+[Update details](https://github.com/gao746700783/AndroidUSBCamera/blob/master/VERSION.md)
 
 Q & A
 -------
 
-[FAQ](https://github.com/ernestp/AndroidUSBCamera/blob/master/FAQ.md)
+[FAQ](https://github.com/gao746700783/AndroidUSBCamera/blob/master/FAQ.md)
 
 
 Homepage & Help
