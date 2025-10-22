@@ -9,6 +9,7 @@ import com.jiangdg.ausbc.camera.CameraUVC
 import com.jiangdg.ausbc.camera.bean.CameraRequest
 import com.jiangdg.usb.USBMonitor
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.collections.hashMapOf
 
 class AUSBCManager private constructor() {
     companion object {
@@ -21,7 +22,9 @@ class AUSBCManager private constructor() {
     private lateinit var mContext: Context
 
     private var mCameraClient: MultiCameraClient? = null
-    private val mCameraMap = hashMapOf<Int, MultiCameraClient.ICamera>()
+    private val _mCameraMap = hashMapOf<Int, MultiCameraClient.ICamera>()
+    val mCameraMap:HashMap<Int, MultiCameraClient.ICamera>
+        get() = _mCameraMap
 
     private var _mCameraRequest: CameraRequest = getCameraRequest()
     // cameraRequest params
@@ -56,11 +59,11 @@ class AUSBCManager private constructor() {
         mCameraClient = MultiCameraClient(context, object : IDeviceConnectCallBack {
             override fun onAttachDev(device: UsbDevice?) {
                 device ?: return
-                if (mCameraMap.containsKey(device.deviceId)) {
+                if (_mCameraMap.containsKey(device.deviceId)) {
                     return
                 }
                 generateCamera(context, device).apply {
-                    mCameraMap[device.deviceId] = this
+                    _mCameraMap[device.deviceId] = this
                     mCameraCallback.forEach { it.onCameraAttached(this) }
                 }
                 // Initiate permission request when device insertion is detected
@@ -72,7 +75,7 @@ class AUSBCManager private constructor() {
             }
 
             override fun onDetachDec(device: UsbDevice?) {
-                mCameraMap.remove(device?.deviceId)?.apply {
+                _mCameraMap.remove(device?.deviceId)?.apply {
                     setUsbControlBlock(null)
                     mCameraCallback.forEach { it.onCameraDetached(this) }
                 }
@@ -81,7 +84,7 @@ class AUSBCManager private constructor() {
             override fun onConnectDev(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
                 device ?: return
                 ctrlBlock ?: return
-                mCameraMap[device.deviceId]?.apply {
+                _mCameraMap[device.deviceId]?.apply {
                     setUsbControlBlock(ctrlBlock)
                     this.setCameraStateCallBack(mCameraStateCallback)
                     mCameraCallback.forEach { it.onCameraConnected(this) }
@@ -92,13 +95,13 @@ class AUSBCManager private constructor() {
                 device: UsbDevice?,
                 ctrlBlock: USBMonitor.UsbControlBlock?
             ) {
-                mCameraMap[device?.deviceId]?.apply {
+                _mCameraMap[device?.deviceId]?.apply {
                     mCameraCallback.forEach { it.onCameraDisConnected(this) }
                 }
             }
 
             override fun onCancelDev(device: UsbDevice?) {
-                mCameraMap[device?.deviceId]?.apply {
+                _mCameraMap[device?.deviceId]?.apply {
                     mCameraCallback.forEach { it.onCameraDisConnected(this) }
                 }
             }
@@ -115,8 +118,8 @@ class AUSBCManager private constructor() {
             return
         }
         isInitialized = false
-        mCameraMap.values.forEach { it.closeCamera() }
-        mCameraMap.clear()
+        _mCameraMap.values.forEach { it.closeCamera() }
+        _mCameraMap.clear()
         mCameraClient?.unRegister()
         mCameraClient?.destroy()
         mCameraClient = null

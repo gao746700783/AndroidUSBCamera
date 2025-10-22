@@ -15,8 +15,10 @@
  */
 package com.jiangdg.ausbc.encode.audio
 
+import android.Manifest
 import android.media.*
 import android.os.Process
+import androidx.annotation.RequiresPermission
 import com.jiangdg.ausbc.encode.bean.RawData
 import com.jiangdg.ausbc.utils.Logger
 import com.jiangdg.ausbc.utils.Utils
@@ -35,6 +37,7 @@ class AudioStrategySystem : IAudioStrategy {
     }
     private var mAudioRecord: AudioRecord? = null
 
+    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     override fun initAudioRecord() {
         try {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)

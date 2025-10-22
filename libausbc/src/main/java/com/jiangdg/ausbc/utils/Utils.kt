@@ -16,6 +16,7 @@
 package com.jiangdg.ausbc.utils
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
@@ -52,6 +53,7 @@ object Utils  {
         return targetSdkVersion >= Build.VERSION_CODES.P
     }
 
+    @SuppressLint("MissingPermission")
     fun getGpsLocation(context: Context?): Location? {
         context?.let { ctx->
             val locationManager = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
